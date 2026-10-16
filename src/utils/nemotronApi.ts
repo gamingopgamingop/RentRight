@@ -14,12 +14,15 @@ const REQUEST_TIMEOUT_MS = 60_000;
 /**
  * NVIDIA sends no CORS headers, so browser calls must go through a proxy:
  * - dev: Vite dev-server proxy (/nemotron-api -> integrate.api.nvidia.com)
- * - prod: point VITE_NEMOTRON_BASE_URL at your own serverless proxy
+ * - prod: same-origin serverless proxy (/api/nemotron -> integrate.api.nvidia.com)
+ * Using a same-origin path in prod means the browser never makes a cross-origin
+ * request, so there is no CORS failure. Override with VITE_NEMOTRON_BASE_URL if
+ * you host the proxy on a different domain.
  */
 const NVIDIA_BASE_URL = import.meta.env.DEV
   ? "/nemotron-api/v1"
   : ((import.meta.env.VITE_NEMOTRON_BASE_URL as string | undefined) ||
-      "https://integrate.api.nvidia.com/v1");
+      "/api/nemotron/v1");
 
 function getNvidiaKey(): string | undefined {
   return import.meta.env.VITE_NVIDIA_API_KEY as string | undefined;
