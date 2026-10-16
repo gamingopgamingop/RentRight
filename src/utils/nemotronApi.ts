@@ -32,7 +32,18 @@ export function isNemotronConfigured(): boolean {
   return !!getNvidiaKey();
 }
 
-async function callNemotron(messages: { role: string; content: string }[]): Promise<string> {
+type NemotronRaw = {
+  ok: boolean;
+  status: number;
+  data: any;
+  errorText: string;
+};
+
+/** Low-level request so callers can decide what counts as success. */
+async function requestNemotron(
+  messages: { role: string; content: string }[],
+  maxTokens = 1500
+): Promise<NemotronRaw> {
   const key = getNvidiaKey();
   if (!key) {
     throw new Error("VITE_NVIDIA_API_KEY is not set");
@@ -56,27 +67,37 @@ async function callNemotron(messages: { role: string; content: string }[]): Prom
         top_p: 0.95,
         // Nemotron-3 is a reasoning model: hidden reasoning tokens are drawn
         // from this budget too, so it must be generous or content comes back empty.
-        max_tokens: 1500,
+        max_tokens: maxTokens,
         stream: false
       }),
       signal: controller.signal
     });
 
-    if (!res.ok) {
-      throw new Error(`Nemotron API error ${res.status}: ${await res.text()}`);
+    const errorText = await res.text();
+    let data: any = null;
+    try {
+      data = errorText ? JSON.parse(errorText) : null;
+    } catch {
+      /* non-JSON body; keep data null */
     }
-
-    const data = await res.json();
-    const content = data?.choices?.[0]?.message?.content?.trim();
-    if (!content) {
-      throw new Error(
-        "Nemotron returned no answer text (reasoning budget may be exhausted)"
-      );
-    }
-    return content;
+    return { ok: res.ok, status: res.status, data, errorText };
   } finally {
     clearTimeout(timer);
   }
+}
+
+async function callNemotron(messages: { role: string; content: string }[]): Promise<string> {
+  const r = await requestNemotron(messages, 1500);
+  if (!r.ok) {
+    throw new Error(`Nemotron API error ${r.status}: ${r.errorText}`);
+  }
+  const content = r.data?.choices?.[0]?.message?.content?.trim();
+  if (!content) {
+    throw new Error(
+      "Nemotron returned no answer text (reasoning budget may be exhausted)"
+    );
+  }
+  return content;
 }
 
 /**
@@ -95,14 +116,24 @@ export async function generateNemotronResponse(
   return callNemotron(messages);
 }
 
-/** Lightweight connectivity probe used on ChatBot mount. */
+/**
+ * Lightweight connectivity probe used on ChatBot mount.
+ * Treats an HTTP 2xx as "connected" even if this tiny ping returns only
+ * reasoning tokens with empty `content` — the reasoning model often does that
+ * for trivial prompts, but the API is clearly reachable (real questions use a
+ * larger token budget and do return content). This avoids a false "down" that
+ * would wrongly trigger the offline banner.
+ */
 export async function testNemotronConnection(): Promise<boolean> {
   try {
-    await callNemotron([
-      { role: "system", content: "Reply with exactly: ok" },
-      { role: "user", content: "ping" }
-    ]);
-    return true;
+    const r = await requestNemotron(
+      [
+        { role: "system", content: "Reply with exactly: ok" },
+        { role: "user", content: "ping" }
+      ],
+      300
+    );
+    return r.ok;
   } catch (error) {
     console.warn("Nemotron connection test failed:", error);
     return false;

@@ -31,6 +31,7 @@ const ChatBot: React.FC = () => {
   const [isLoading, setIsLoading] = useState(false);
   const [geminiConnected, setGeminiConnected] = useState<boolean | null>(null);
   const [nemotronConnected, setNemotronConnected] = useState<boolean | null>(null);
+  const [checkingConn, setCheckingConn] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   // Both providers down (or unreachable) => show the degraded banner
@@ -43,16 +44,28 @@ const ChatBot: React.FC = () => {
     }
   }, [messages]);
   
-  // Probe both Gemini and Nemotron when the component mounts
+  // Probe both Gemini and Nemotron. Runs on mount and via the banner's Retry
+  // button (e.g. after a Gemini quota window resets) so the user is not stuck
+  // on offline answers until a full reload.
+  const runConnectionChecks = async () => {
+    setCheckingConn(true);
+    setGeminiConnected(null);
+    setNemotronConnected(null);
+    try {
+      const [gem, nem] = await Promise.all([
+        testGeminiConnection().then(() => true).catch(() => false),
+        testNemotronConnection(),
+      ]);
+      setGeminiConnected(gem);
+      setNemotronConnected(nem);
+    } finally {
+      setCheckingConn(false);
+    }
+  };
+
   useEffect(() => {
-    const checkConnections = async () => {
-      testGeminiConnection()
-        .then(() => setGeminiConnected(true))
-        .catch(() => setGeminiConnected(false));
-      testNemotronConnection().then(setNemotronConnected);
-    };
-    
-    checkConnections();
+    runConnectionChecks();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const toggleChat = () => {
@@ -137,9 +150,19 @@ const ChatBot: React.FC = () => {
       {isOpen && (
         <div className="fixed bottom-5 right-5 w-80 sm:w-96 h-[26rem] bg-white rounded-lg shadow-xl flex flex-col overflow-hidden border border-gray-200 z-50">
           {allProvidersDown && (
-            <div className="absolute top-0 left-0 right-0 bg-red-100 text-red-800 px-4 py-2 text-sm flex items-center z-10">
-              <AlertCircle className="h-4 w-4 mr-2" />
-              API connection issue. Using offline answers.
+            <div className="absolute top-0 left-0 right-0 bg-red-100 text-red-800 px-4 py-2 text-sm flex items-center justify-between gap-2 z-10">
+              <span className="flex items-center">
+                <AlertCircle className="h-4 w-4 mr-2 shrink-0" />
+                API connection issue. Using offline answers.
+              </span>
+              <button
+                type="button"
+                onClick={runConnectionChecks}
+                disabled={checkingConn}
+                className="text-xs font-semibold underline underline-offset-2 disabled:opacity-60 shrink-0"
+              >
+                {checkingConn ? 'Checking...' : 'Retry'}
+              </button>
             </div>
           )}
           {/* Chat header */}
