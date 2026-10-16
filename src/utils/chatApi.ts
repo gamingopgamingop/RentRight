@@ -1,5 +1,6 @@
 import { generateGeminiResponse, getOfflineRentRightResponse } from "./geminiApi";
 import { generateNemotronResponse } from "./nemotronApi";
+import { ProviderError } from "./providerErrors";
 import type { ChatTurn } from "./siteKnowledge";
 
 /**
@@ -41,12 +42,20 @@ async function safeGenerate(
     const text = await fn();
     return { provider, text: toPlainText(text) };
   } catch (error) {
-    console.warn(`${provider} generation failed:`, error);
+    // Log only a safe classification + message — never the user's prompt.
+    const kind = error instanceof ProviderError ? error.classification.kind : "unknown";
+    console.warn(`[chat] ${provider} unavailable (${kind}).`);
     return null;
   }
 }
 
-/** Ask Gemini and Nemotron in parallel; returns one reply per successful model. */
+/**
+ * Ask Gemini and Nemotron in parallel; returns one reply per successful model.
+ * Each provider owns its own retry/cooldown policy (see geminiApi/nemotronApi),
+ * so an exhausted Gemini is skipped without a network call and Nemotron still
+ * answers — we do NOT loop or duplicate the user's request across providers.
+ * Offline rule-engine answers are used only when every provider fails.
+ */
 export async function generateDualChatReplies(
   userInput: string,
   history: ChatTurn[] = []

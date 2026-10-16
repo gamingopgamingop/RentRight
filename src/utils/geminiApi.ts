@@ -60,7 +60,7 @@ export const getOfflineRentRightResponse = (input: string): string => {
   }
 
   if (query.includes("inspect") || query.includes("checklist") || query.includes("visit")) {
-    return "📋 Use our 15-point Property Inspection Checklist at /inspection-checklist during physical visits. Check water pump status, mobile signal strength, and sub-meter unit rates before signing!";
+    return "📋 Use our 15-point Property Inspection Checklist at /inspection-checklist during physical visits. Check water pump pressure, mobile signal strength, and sub-meter unit rates before signing!";
   }
 
   if (query.includes("owner") || query.includes("list") || query.includes("landlord")) {
