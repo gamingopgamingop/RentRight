@@ -124,8 +124,8 @@ function safeMessage(input: string, fallback: string): string {
   if (!cleaned) return fallback;
   // Strip anything that looks like a bearer/api key before surfacing.
   const redacted = cleaned
-    .replace(/(nvapi-|sk-|AIza)[A-Za-z0-9_\-]+/g, "[redacted-key]")
-    .replace(/Bearer\s+[A-Za-z0-9._\-]+/gi, "Bearer [redacted]");
+    .replace(/(nvapi-|sk-|AIza)[A-Za-z0-9_-]+/g, "[redacted-key]")
+    .replace(/Bearer\s+[A-Za-z0-9._-]+/gi, "Bearer [redacted]");
   return redacted.length > 200 ? redacted.slice(0, 197) + "..." : redacted;
 }
 
@@ -135,14 +135,14 @@ function safeMessage(input: string, fallback: string): string {
  */
 export function classifyError(err: unknown, opts?: { explicitStatus?: number; provider?: ProviderName }): ClassifiedError {
   const provider = opts?.provider ?? "Gemini";
-  const anyErr = err as any;
+  const e = err as { message?: unknown; status?: unknown; code?: unknown; name?: unknown };
   const status =
     opts?.explicitStatus ??
-    (typeof anyErr?.status === "number" ? anyErr.status : undefined) ??
-    (typeof anyErr?.code === "number" ? anyErr.code : undefined);
-  const rawMsg = String(anyErr?.message ?? anyErr ?? "");
+    (typeof e?.status === "number" ? e.status : undefined) ??
+    (typeof e?.code === "number" ? e.code : undefined);
+  const rawMsg = String(typeof e?.message === "string" ? e.message : (err ?? ""));
   const lower = rawMsg.toLowerCase();
-  const name = String(anyErr?.name ?? "");
+  const name = String(e?.name ?? "");
 
   // Transport / abort first (fetch rejects with TypeError "Failed to fetch").
   if (name === "AbortError" || /abort|timeout|deadline|timed?\s?out/i.test(lower)) {
@@ -226,7 +226,6 @@ export async function withBoundedRetry<T>(
   const baseMs = opts.baseMs ?? 400;
   const maxMs = opts.maxMs ?? 4000;
   let attempt = 0;
-  // eslint-disable-next-line no-constant-condition
   while (true) {
     try {
       return await fn();
