@@ -5,6 +5,7 @@ import ChatBotIcon from './ChatBotIcon';
 import { generateDualChatReplies, type ChatProvider } from '../utils/chatApi';
 import { testGeminiConnection } from '../utils/geminiApi';
 import { testNemotronConnection } from '../utils/nemotronApi';
+import type { ProviderTestResult } from '../utils/providerErrors';
 import type { ChatTurn } from '../utils/siteKnowledge';
 
 // Define types for our messages
@@ -29,13 +30,16 @@ const ChatBot: React.FC = () => {
   ]);
   const [inputValue, setInputValue] = useState('');
   const [isLoading, setIsLoading] = useState(false);
-  const [geminiConnected, setGeminiConnected] = useState<boolean | null>(null);
-  const [nemotronConnected, setNemotronConnected] = useState<boolean | null>(null);
+  const [geminiResult, setGeminiResult] = useState<ProviderTestResult | null>(null);
+  const [nemotronResult, setNemotronResult] = useState<ProviderTestResult | null>(null);
   const [checkingConn, setCheckingConn] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
-  // Both providers down (or unreachable) => show the degraded banner
-  const allProvidersDown = geminiConnected === false && nemotronConnected === false;
+  // Banner only when BOTH configured providers are offline. A single down
+  // provider (e.g. Gemini quota) is shown per-chip but does NOT claim the
+  // whole assistant is offline, since the other can still answer.
+  const allProvidersDown =
+    geminiResult?.status === 'offline' && nemotronResult?.status === 'offline';
 
   // Auto-scroll to the bottom when new messages arrive
   useEffect(() => {
@@ -49,15 +53,15 @@ const ChatBot: React.FC = () => {
   // on offline answers until a full reload.
   const runConnectionChecks = async () => {
     setCheckingConn(true);
-    setGeminiConnected(null);
-    setNemotronConnected(null);
     try {
+      // Each probe returns a structured result and never throws (it catches
+      // transport/quota/auth internally).
       const [gem, nem] = await Promise.all([
-        testGeminiConnection().then(() => true).catch(() => false),
+        testGeminiConnection(),
         testNemotronConnection(),
       ]);
-      setGeminiConnected(gem);
-      setNemotronConnected(nem);
+      setGeminiResult(gem);
+      setNemotronResult(nem);
     } finally {
       setCheckingConn(false);
     }
@@ -114,9 +118,10 @@ const ChatBot: React.FC = () => {
       }));
 
       setMessages(prevMessages => [...prevMessages, ...botMessages]);
-      if (replies.some((r) => r.provider === 'Offline') && replies.length === 1) {
-        setGeminiConnected(false);
-        setNemotronConnected(false);
+      if (replies.length === 1 && replies[0].provider === 'Offline') {
+        // Everything failed — refresh per-provider status so the chips and
+        // banner explain *why* (quota / auth / network) instead of guessing.
+        runConnectionChecks();
       }
     } catch (error) {
       console.error('Error generating response:', error);
@@ -139,6 +144,28 @@ const ChatBot: React.FC = () => {
     if (e.key === 'Enter') {
       handleSendMessage();
     }
+  };
+
+  const renderStatusChip = (r: ProviderTestResult | null, label: string) => {
+    const dot =
+      !r
+        ? 'bg-white/40'
+        : r.status === 'online'
+        ? 'bg-emerald-400'
+        : r.status === 'degraded'
+        ? 'bg-amber-300'
+        : 'bg-red-400';
+    const text = !r ? (checkingConn ? 'checking…' : '—') : r.status;
+    const title = r?.message || (checkingConn ? 'Checking connection…' : 'Pending');
+    return (
+      <span
+        title={title}
+        className="inline-flex items-center gap-1 text-[9px] font-medium text-violet-100"
+      >
+        <span className={`h-1.5 w-1.5 rounded-full ${dot}`} />
+        {label}: {text}
+      </span>
+    );
   };
 
   return (
@@ -172,6 +199,10 @@ const ChatBot: React.FC = () => {
               <span className="text-[10px] text-violet-200">
                 Gemini + NVIDIA Nemotron · answers from RentRight site data
               </span>
+              <div className="flex items-center gap-3 mt-1">
+                {renderStatusChip(geminiResult, 'Gemini')}
+                {renderStatusChip(nemotronResult, 'Nemotron')}
+              </div>
             </div>
             <Button 
               variant="ghost" 
