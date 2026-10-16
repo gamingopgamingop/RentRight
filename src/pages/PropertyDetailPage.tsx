@@ -48,10 +48,18 @@ import {
   Wallet,
   Plus,
   ShieldAlert,
+  Bot,
+  Copy,
 } from "lucide-react";
 import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
 import { toast } from "sonner";
+import {
+  TONE_LABEL,
+  computeNegotiationStats,
+  buildNegotiationMessage,
+  type Tone,
+} from "../utils/rentNegotiation";
 
 export const PropertyDetailPage: React.FC = () => {
   const { id } = useParams<{ id: string }>();
@@ -65,7 +73,8 @@ export const PropertyDetailPage: React.FC = () => {
     getReviewsForProperty,
     addReview,
     markReviewHelpful,
-    reviews
+    reviews,
+    properties
   } = useProperties();
   const { isAuthenticated, user } = useAuth();
 
@@ -75,6 +84,43 @@ export const PropertyDetailPage: React.FC = () => {
   const [enquiryOpen, setEnquiryOpen] = useState(false);
   const [reportOpen, setReportOpen] = useState(false);
   const [scheduleVisitOpen, setScheduleVisitOpen] = useState(false);
+
+  // Inline AI Rent Negotiator (shared logic with property cards & /ai-negotiator)
+  const [negOpen, setNegOpen] = useState(false);
+  const [negTone, setNegTone] = useState<Tone>("polite");
+  const [counterStr, setCounterStr] = useState("");
+  const [enquiryDraft, setEnquiryDraft] = useState<string | undefined>(undefined);
+
+  const negStats = useMemo(
+    () => computeNegotiationStats(property, properties),
+    [property, properties]
+  );
+
+  const negMessage = useMemo(() => {
+    if (!property || !negStats) return "";
+    const counter = Number(counterStr);
+    return buildNegotiationMessage({
+      property,
+      stats: negStats,
+      tone: negTone,
+      yourName: user?.name || "Prospective Tenant",
+      counterRent: counter > 0 ? counter : undefined,
+    });
+  }, [property, negStats, negTone, counterStr, user]);
+
+  const handleNegotiateCopy = async () => {
+    try {
+      await navigator.clipboard.writeText(negMessage);
+      toast.success("Negotiation message copied!");
+    } catch {
+      toast.error("Could not access clipboard");
+    }
+  };
+
+  const handleUseInEnquiry = () => {
+    setEnquiryDraft(negMessage);
+    setEnquiryOpen(true);
+  };
 
   // Visit booking state
   const [visitDate, setVisitDate] = useState<Date | undefined>(new Date());
@@ -455,7 +501,7 @@ export const PropertyDetailPage: React.FC = () => {
                 {/* CTA Buttons */}
                 <div className="space-y-2.5 pt-2">
                   <Button
-                    onClick={() => setEnquiryOpen(true)}
+                    onClick={() => { setEnquiryDraft(undefined); setEnquiryOpen(true); }}
                     className="w-full bg-violet-600 hover:bg-violet-700 text-white font-semibold py-5 text-sm shadow-md gap-2"
                   >
                     Send Rental Enquiry
@@ -469,6 +515,70 @@ export const PropertyDetailPage: React.FC = () => {
                     <Calendar className="w-4 h-4 text-violet-600" />
                     Schedule Property Viewing
                   </Button>
+                </div>
+
+                {/* Inline AI Rent Negotiator */}
+                <div className="pt-1">
+                  <Button
+                    onClick={() => setNegOpen((v) => !v)}
+                    variant="outline"
+                    className="w-full border-fuchsia-200 text-fuchsia-700 hover:bg-fuchsia-50 font-semibold py-4 text-xs gap-2"
+                  >
+                    <Bot className="w-4 h-4" />
+                    {negOpen ? "Hide Negotiator" : "Negotiate Rent with AI"}
+                  </Button>
+
+                  {negOpen && negStats && (
+                    <div className="mt-2 p-3 rounded-xl bg-fuchsia-50/70 border border-fuchsia-200 space-y-2.5 animate-fade-in">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[10px] font-bold uppercase tracking-wider text-fuchsia-800">AI Rent Negotiator</span>
+                        <span className="text-[10px] text-slate-500">{property.locality} avg ₹{negStats.locAvg.toLocaleString()}</span>
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-1.5">
+                        {(Object.keys(TONE_LABEL) as Tone[]).map((t) => (
+                          <button
+                            key={t}
+                            type="button"
+                            onClick={() => setNegTone(t)}
+                            className={`px-2 py-1.5 rounded-lg text-[10px] font-semibold border transition ${negTone === t ? "bg-fuchsia-600 text-white border-fuchsia-600" : "bg-white text-slate-700 border-slate-200 hover:border-fuchsia-300"}`}
+                          >
+                            {TONE_LABEL[t]}
+                          </button>
+                        ))}
+                      </div>
+
+                      <div className="flex items-center gap-2">
+                        <label className="text-[10px] font-bold text-slate-600 shrink-0">Your offer</label>
+                        <div className="relative flex-1">
+                          <span className="absolute left-2 top-1/2 -translate-y-1/2 text-xs text-slate-500">₹</span>
+                          <Input
+                            inputMode="numeric"
+                            value={counterStr}
+                            placeholder={String(negStats.suggestedCounter)}
+                            onChange={(e) => setCounterStr(e.target.value.replace(/[^0-9]/g, ""))}
+                            className="h-8 text-xs pl-5"
+                          />
+                        </div>
+                      </div>
+
+                      <Textarea readOnly value={negMessage} rows={8} className="text-[11px] leading-relaxed bg-white border-fuchsia-200" />
+
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-[10px] text-slate-500">
+                          Recommended: <strong className="text-emerald-700">₹{negStats.suggestedCounter.toLocaleString()}</strong>
+                        </span>
+                        <div className="flex gap-2">
+                          <Button size="sm" variant="outline" onClick={handleNegotiateCopy} className="text-[11px] h-7 gap-1 border-fuchsia-200 text-fuchsia-700 hover:bg-fuchsia-50">
+                            <Copy className="w-3 h-3" /> Copy
+                          </Button>
+                          <Button size="sm" onClick={handleUseInEnquiry} className="text-[11px] h-7 bg-fuchsia-600 hover:bg-fuchsia-700 text-white">
+                            Use in Enquiry
+                          </Button>
+                        </div>
+                      </div>
+                    </div>
+                  )}
                 </div>
 
                 {/* Safe Contact Privacy Box */}
@@ -664,6 +774,7 @@ export const PropertyDetailPage: React.FC = () => {
         property={property}
         isOpen={enquiryOpen}
         onClose={() => setEnquiryOpen(false)}
+        initialMessage={enquiryDraft}
       />
 
       {/* Report Modal */}

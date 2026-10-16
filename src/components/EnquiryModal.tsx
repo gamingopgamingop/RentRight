@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { Property, useProperties } from "../contexts/PropertiesContext";
 import { useAuth } from "../contexts/AuthContext";
 import {
@@ -21,12 +21,15 @@ interface EnquiryModalProps {
   property: Property;
   isOpen: boolean;
   onClose: () => void;
+  /** Optional pre-filled message (e.g. an AI-negotiation draft) applied on open. */
+  initialMessage?: string;
 }
 
 export const EnquiryModal: React.FC<EnquiryModalProps> = ({
   property,
   isOpen,
   onClose,
+  initialMessage,
 }) => {
   const { user } = useAuth();
   const { addEnquiry } = useProperties();
@@ -41,9 +44,17 @@ export const EnquiryModal: React.FC<EnquiryModalProps> = ({
     user?.occupation?.toLowerCase().includes("student") ? "Student" : "Working Professional"
   );
   const [message, setMessage] = useState(
-    `Hi ${property.ownerName}, I am interested in your ${property.accommodationType} at ${property.locality}. Could you please confirm if room availability is open for move-in around ${property.availableFrom}?`
+    initialMessage ||
+      `Hi ${property.ownerName}, I am interested in your ${property.accommodationType} at ${property.locality}. Could you please confirm if room availability is open for move-in around ${property.availableFrom}?`
   );
   const [submittedId, setSubmittedId] = useState<string | null>(null);
+
+  // When opened with a drafted message (e.g. from the inline negotiator), seed
+  // it so the seeker sends exactly what they reviewed. Ordinary enquiries
+  // (no initialMessage) keep their current text.
+  useEffect(() => {
+    if (isOpen && initialMessage) setMessage(initialMessage);
+  }, [isOpen, initialMessage]);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
