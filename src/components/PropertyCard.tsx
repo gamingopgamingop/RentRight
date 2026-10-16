@@ -1,10 +1,18 @@
-import React, { useState } from "react";
+import React, { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { Property, useProperties } from "../contexts/PropertiesContext";
 import { Badge } from "@/components/ui/badge";
-import { Star, ShieldCheck, Heart, Scale, MapPin, Calendar, Check, Zap, FileCheck, AlertOctagon, Bot } from "lucide-react";
+import { Star, ShieldCheck, Heart, Scale, MapPin, Calendar, Check, Zap, FileCheck, AlertOctagon, Bot, Copy } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { toast } from "sonner";
+import {
+  TONE_LABEL,
+  computeNegotiationStats,
+  buildNegotiationMessage,
+  type Tone,
+} from "../utils/rentNegotiation";
 import {
   Tooltip,
   TooltipContent,
@@ -18,11 +26,50 @@ interface PropertyCardProps {
 
 export const PropertyCard: React.FC<PropertyCardProps> = ({ property, featured = false }) => {
   const [currentImageIndex, setCurrentImageIndex] = useState(0);
-  const { isComparing, addToCompare, isSaved, toggleSaveProperty, reportProperty } = useProperties();
+  const { isComparing, addToCompare, isSaved, toggleSaveProperty, reportProperty, properties } = useProperties();
 
   const comparing = isComparing(property.id);
   const saved = isSaved(property.id);
   const isAvailable = property.listingStatus === "Available";
+
+  // Inline AI Rent Negotiator — same shared logic as the /ai-negotiator page.
+  const [negOpen, setNegOpen] = useState(false);
+  const [negTone, setNegTone] = useState<Tone>("polite");
+  const [counterStr, setCounterStr] = useState("");
+
+  const negStats = useMemo(
+    () => computeNegotiationStats(property, properties),
+    [property, properties]
+  );
+
+  const negMessage = useMemo(() => {
+    if (!negStats) return "";
+    const counter = Number(counterStr);
+    return buildNegotiationMessage({
+      property,
+      stats: negStats,
+      tone: negTone,
+      yourName: "Prospective Tenant",
+      counterRent: counter > 0 ? counter : undefined,
+    });
+  }, [property, negStats, negTone, counterStr]);
+
+  const handleNegotiateCopy = async (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    try {
+      await navigator.clipboard.writeText(negMessage);
+      toast.success("Negotiation message copied!");
+    } catch {
+      toast.error("Could not access clipboard");
+    }
+  };
+
+  const toggleNegotiate = (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setNegOpen((v) => !v);
+  };
 
   // Expiry Auto-Downgrade detection
   const ageDays = Math.floor((Date.now() - new Date(property.listedDate).getTime()) / 86400000);
@@ -233,12 +280,70 @@ export const PropertyCard: React.FC<PropertyCardProps> = ({ property, featured =
             View Details & Rules
           </Button>
         </Link>
-        <Link to={`/ai-negotiator?property=${property.id}`} className="w-full">
-          <Button size="sm" className="w-full text-xs h-8 gap-1 bg-fuchsia-600 hover:bg-fuchsia-700 text-white" onClick={(e) => e.stopPropagation()}>
-            <Bot className="w-3.5 h-3.5" /> Negotiate Rent
+        <button type="button" className="w-full" onClick={toggleNegotiate}>
+          <Button size="sm" className="w-full text-xs h-8 gap-1 bg-fuchsia-600 hover:bg-fuchsia-700 text-white">
+            <Bot className="w-3.5 h-3.5" /> {negOpen ? "Hide Negotiator" : "Negotiate Rent"}
           </Button>
-        </Link>
+        </button>
       </div>
+
+      {/* Inline AI Rent Negotiator panel */}
+      {negOpen && negStats && (
+        <div className="mx-4 mb-3 p-3 rounded-xl bg-fuchsia-50/70 border border-fuchsia-200 space-y-2.5">
+          <div className="flex items-center justify-between">
+            <span className="text-[10px] font-bold uppercase tracking-wider text-fuchsia-800">AI Rent Negotiator</span>
+            <span className="text-[10px] text-slate-500">{property.locality} avg ₹{negStats.locAvg.toLocaleString()}</span>
+          </div>
+
+          <div className="grid grid-cols-2 gap-1.5">
+            {(Object.keys(TONE_LABEL) as Tone[]).map((t) => (
+              <button
+                key={t}
+                type="button"
+                onClick={(e) => { e.preventDefault(); e.stopPropagation(); setNegTone(t); }}
+                className={`px-2 py-1.5 rounded-lg text-[10px] font-semibold border transition ${negTone === t ? "bg-fuchsia-600 text-white border-fuchsia-600" : "bg-white text-slate-700 border-slate-200 hover:border-fuchsia-300"}`}
+              >
+                {TONE_LABEL[t]}
+              </button>
+            ))}
+          </div>
+
+          <div className="flex items-center gap-2">
+            <label className="text-[10px] font-bold text-slate-600 shrink-0">Your offer</label>
+            <div className="relative flex-1">
+              <span className="absolute left-2 top-1/2 -translate-y-1/2 text-xs text-slate-500">₹</span>
+              <Input
+                inputMode="numeric"
+                value={counterStr}
+                placeholder={String(negStats.suggestedCounter)}
+                onChange={(e) => setCounterStr(e.target.value.replace(/[^0-9]/g, ""))}
+                className="h-8 text-xs pl-5"
+              />
+            </div>
+          </div>
+
+          <Textarea
+            readOnly
+            value={negMessage}
+            rows={6}
+            className="text-[11px] leading-relaxed bg-white border-fuchsia-200"
+          />
+
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-[10px] text-slate-500">
+              Recommended: <strong className="text-emerald-700">₹{negStats.suggestedCounter.toLocaleString()}</strong>
+            </span>
+            <div className="flex gap-2">
+              <Button size="sm" variant="outline" onClick={handleNegotiateCopy} className="text-[11px] h-7 gap-1 border-fuchsia-200 text-fuchsia-700 hover:bg-fuchsia-50">
+                <Copy className="w-3 h-3" /> Copy
+              </Button>
+              <Link to={`/ai-negotiator?property=${property.id}`} onClick={(e) => e.stopPropagation()}>
+                <Button size="sm" variant="ghost" className="text-[11px] h-7 text-fuchsia-700 hover:bg-fuchsia-100">Open full tool</Button>
+              </Link>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Expiry Auto-Downgrade banner */}
       {isStale && (

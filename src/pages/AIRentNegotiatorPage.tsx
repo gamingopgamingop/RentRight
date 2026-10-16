@@ -26,16 +26,13 @@ import {
   AlertCircle,
 } from "lucide-react";
 import { useProperties } from "../contexts/PropertiesContext";
+import {
+  TONE_LABEL,
+  computeNegotiationStats,
+  buildNegotiationMessage,
+  type Tone,
+} from "../utils/rentNegotiation";
 import { toast } from "sonner";
-
-type Tone = "polite" | "data-driven" | "friendly" | "firm";
-
-const TONE_LABEL: Record<Tone, string> = {
-  polite: "Polite & Respectful",
-  "data-driven": "Data-Driven & Direct",
-  friendly: "Friendly Student Vibe",
-  firm: "Firm but Fair",
-};
 
 export const AIRentNegotiatorPage: React.FC = () => {
   const navigate = useNavigate();
