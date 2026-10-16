@@ -22,29 +22,61 @@ interface MinimalResponse {
 }
 
 export default async function handler(req: MinimalRequest, res: MinimalResponse) {
-  // Permissive CORS for local dev / preview. In production you can lock this
-  // to your site's origin.
-  res.setHeader?.("Access-Control-Allow-Origin", "*");
-  res.setHeader?.("Access-Control-Allow-Methods", "POST, OPTIONS");
-  res.setHeader?.("Access-Control-Allow-Headers", "Content-Type, Idempotency-Key");
+  // Wrap EVERYTHING so the function never crashes with Vercel's opaque
+  // FUNCTION_INVOCATION_FAILED — it always returns a readable JSON error.
+  try {
+    // CORS for local dev / preview. Lock to your origin in production.
+    res.setHeader?.("Access-Control-Allow-Origin", "*");
+    res.setHeader?.("Access-Control-Allow-Methods", "POST, OPTIONS");
+    res.setHeader?.("Access-Control-Allow-Headers", "Content-Type, Idempotency-Key");
 
-  if (req.method === "OPTIONS") {
-    res.status(204).json({});
-    return;
+    if (req.method === "OPTIONS") {
+      res.status(204).json({});
+      return;
+    }
+    if (req.method !== "POST") {
+      res.status(405).json({ message: "Method not allowed" });
+      return;
+    }
+
+    // Debug aid: shows up in Vercel Dashboard > Functions > Logs.
+    const hasKey = !!process.env.OUTPERO_API_KEY;
+    console.log(`[outpero-call] OUTPERO_API_KEY ${hasKey ? "present" : "MISSING"}`);
+
+    if (!hasKey) {
+      res.status(500).json({
+        message:
+          "OUTPERO_API_KEY is not set on the server. Add it in Vercel > Project > Settings > Environment Variables, then redeploy.",
+      });
+      return;
+    }
+
+    // Global fetch requires Node 18+. vercel.json pins nodejs20.x; this guards
+    // against an older runtime being selected so we fail with a clear message.
+    if (typeof fetch !== "function") {
+      res.status(500).json({
+        message:
+          "Server runtime has no global fetch. Set the function Node.js version to 18+ (see vercel.json).",
+      });
+      return;
+    }
+
+    const idemHeader = req.headers?.["idempotency-key"];
+    const idempotencyKey = typeof idemHeader === "string" ? idemHeader : undefined;
+
+    const { status, json } = await forwardOutperoCall(
+      req.body ?? {},
+      process.env.OUTPERO_API_KEY,
+      idempotencyKey
+    );
+
+    res.status(status).json(json);
+  } catch (err: any) {
+    console.error("[outpero-call] unhandled error:", err);
+    try {
+      res.status(500).json({ message: `Function error: ${err?.message || "unknown"}` });
+    } catch {
+      /* response already sent */
+    }
   }
-  if (req.method !== "POST") {
-    res.status(405).json({ message: "Method not allowed" });
-    return;
-  }
-
-  const idemHeader = req.headers?.["idempotency-key"];
-  const idempotencyKey = typeof idemHeader === "string" ? idemHeader : undefined;
-
-  const { status, json } = await forwardOutperoCall(
-    req.body ?? {},
-    process.env.OUTPERO_API_KEY,
-    idempotencyKey
-  );
-
-  res.status(status).json(json);
 }

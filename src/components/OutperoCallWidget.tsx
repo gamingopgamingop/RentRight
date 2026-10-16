@@ -23,9 +23,14 @@ type CallIntent =
   | "Maintenance update";
 
 /**
- * OutperoCallWidget: one-click trigger that asks Outpero's AI voice agent to
- * place a real outbound call to a phone number (rental follow-ups, viewing
- * confirmations, etc). The secret key stays server-side via the Vite proxy.
+ * OutperoCallWidget: asks Outpero's AI voice agent to place a real outbound
+ * call to a phone number (rental follow-ups, viewing confirmations, etc).
+ * The browser only calls our own /api/outpero-call server endpoint — the API
+ * key stays server-side and never reaches the page.
+ *
+ * Includes a demo fallback: if the live call fails (Outpero/Vercel downtime,
+ * missing server env var, 0 credits, etc.) we show a clearly-labelled
+ * SIMULATED success so the RentRight flow can always be demoed end-to-end.
  */
 export const OutperoCallWidget: React.FC = () => {
   const [open, setOpen] = useState(false);
@@ -36,14 +41,43 @@ export const OutperoCallWidget: React.FC = () => {
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<OutperoCallResult | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [demoMode, setDemoMode] = useState(false);
+  const [simulated, setSimulated] = useState(false);
+  const [fallbackReason, setFallbackReason] = useState<string | null>(null);
 
   const reset = () => {
     setResult(null);
     setError(null);
+    setSimulated(false);
+    setFallbackReason(null);
+  };
+
+  const simulateCall = (reason: string | null) => {
+    setSimulated(true);
+    setFallbackReason(reason);
+    setResult({ id: `simulated-${Date.now()}`, status: "queued (simulated)", raw: {} });
   };
 
   const handleCall = async () => {
     reset();
+
+    // Validate inputs up front so we never "mock" a bad-number mistake.
+    const cleanPhone = phone.replace(/[\s\-()]/g, "");
+    if (!/^\+?\d{7,15}$/.test(cleanPhone)) {
+      setError("Enter a valid phone number, e.g. +919876543210");
+      return;
+    }
+    if (!employeeId.trim()) {
+      setError("Add an agent (employee) ID under 'Advanced'.");
+      return;
+    }
+
+    if (demoMode) {
+      simulateCall(null);
+      toast.info("Simulated call (demo mode) — no Outpero credits used.");
+      return;
+    }
+
     setBusy(true);
     try {
       const call = await placeOutperoCall({
@@ -51,6 +85,7 @@ export const OutperoCallWidget: React.FC = () => {
         employeeId,
         variables: { intent, property },
       });
+      setSimulated(false);
       setResult(call);
       toast.success(`AI agent is calling ${phone} (${call.status})`);
     } catch (e: any) {
@@ -58,8 +93,10 @@ export const OutperoCallWidget: React.FC = () => {
         (e instanceof Error && e.message) ||
         (typeof e === "string" ? e : "") ||
         "Could not place the call.";
-      setError(msg);
-      toast.error(msg);
+      console.error("[Outpero] live call failed — using demo fallback:", msg);
+      // Never block the RentRight demo on Outpero/Vercel uptime.
+      simulateCall(msg);
+      toast.warning("Outpero unavailable — showing a simulated call for the demo.");
     } finally {
       setBusy(false);
     }
@@ -84,7 +121,8 @@ export const OutperoCallWidget: React.FC = () => {
             </DialogTitle>
             <DialogDescription className="text-xs">
               Outpero's AI agent will place a live call to the number below using your configured
-              rental script. Calls are signed server-side — your API key never leaves the dev proxy.
+              rental script. The browser only calls our own server endpoint — the API key stays
+              server-side and never reaches this page.
             </DialogDescription>
           </DialogHeader>
 
@@ -135,12 +173,49 @@ export const OutperoCallWidget: React.FC = () => {
               />
             </details>
 
+            <label className="flex items-center gap-2 text-[11px] text-slate-600 select-none">
+              <input
+                type="checkbox"
+                checked={demoMode}
+                onChange={(e) => setDemoMode(e.target.checked)}
+                className="h-3.5 w-3.5 accent-indigo-600"
+              />
+              Demo mode — simulate the call (no Outpero/credits used)
+            </label>
+
             {result && (
-              <div className="rounded-lg bg-emerald-50 border border-emerald-200 p-2.5 text-emerald-800 flex items-start gap-2">
+              <div
+                className={`rounded-lg border p-2.5 flex items-start gap-2 ${
+                  simulated
+                    ? "bg-amber-50 border-amber-200 text-amber-900"
+                    : "bg-emerald-50 border-emerald-200 text-emerald-800"
+                }`}
+              >
                 <CheckCircle2 className="w-4 h-4 shrink-0 mt-0.5" />
                 <div className="leading-relaxed">
-                  Call placed — status <strong>{result.status}</strong>
-                  {result.id && <span className="block text-[10px] text-emerald-700 font-mono mt-0.5">id: {result.id}</span>}
+                  {simulated ? (
+                    <>
+                      <span className="font-semibold uppercase tracking-wide text-[10px] block">
+                        Simulated (demo)
+                      </span>
+                      AI agent will call <strong>{phone}</strong> for {intent.toLowerCase()}
+                      {property ? ` — ${property}` : ""}.
+                      {fallbackReason && (
+                        <span className="block text-[10px] text-amber-700 mt-1">
+                          Live call failed: {fallbackReason}
+                        </span>
+                      )}
+                    </>
+                  ) : (
+                    <>
+                      Call placed — status <strong>{result.status}</strong>
+                      {result.id && (
+                        <span className="block text-[10px] text-emerald-700 font-mono mt-0.5">
+                          id: {result.id}
+                        </span>
+                      )}
+                    </>
+                  )}
                 </div>
               </div>
             )}
