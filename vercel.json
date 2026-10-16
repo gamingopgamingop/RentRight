@@ -2,12 +2,10 @@
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "functions": {
     "api/outpero-call.ts": {
-      "runtime": "nodejs20.x",
       "memory": 1024,
       "maxDuration": 30
     },
     "api/nemotron/[...path].ts": {
-      "runtime": "nodejs20.x",
       "memory": 1024,
       "maxDuration": 60
     }
