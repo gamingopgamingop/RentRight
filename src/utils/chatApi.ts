@@ -1,4 +1,4 @@
-import { generateGeminiResponse, getOfflineRentRightResponse } from "./geminiApi";
+import { getOfflineRentRightResponse } from "./geminiApi";
 import { generateNemotronResponse } from "./nemotronApi";
 import { ProviderError } from "./providerErrors";
 import type { ChatTurn } from "./siteKnowledge";
@@ -50,27 +50,27 @@ async function safeGenerate(
 }
 
 /**
- * Ask Gemini and Nemotron in parallel; returns one reply per successful model.
- * Each provider owns its own retry/cooldown policy (see geminiApi/nemotronApi),
- * so an exhausted Gemini is skipped without a network call and Nemotron still
- * answers — we do NOT loop or duplicate the user's request across providers.
- * Offline rule-engine answers are used only when every provider fails.
+ * TEMPORARY: Gemini is disabled — Nemotron only. Re-enable by restoring the
+ * parallel Gemini call below.
+ *
+ * Nemotron owns its own retry policy (see nemotronApi), so we do NOT loop or
+ * duplicate the user's request. Offline rule-engine answers are used only when
+ * Nemotron fails.
  */
 export async function generateDualChatReplies(
   userInput: string,
   history: ChatTurn[] = []
 ): Promise<ChatReply[]> {
-  const [gemini, nemotron] = await Promise.all([
-    safeGenerate("Gemini", () => generateGeminiResponse(userInput, history)),
-    safeGenerate("Nemotron", () => generateNemotronResponse(userInput, history))
-  ]);
+  const nemotron = await safeGenerate("Nemotron", () =>
+    generateNemotronResponse(userInput, history)
+  );
 
-  const replies = [gemini, nemotron].filter((r): r is ChatReply => r !== null);
+  const replies = [nemotron].filter((r): r is ChatReply => r !== null);
 
   if (replies.length > 0) {
     return replies;
   }
 
-  // Both providers unavailable (bad keys, CORS, offline) — rule-engine fallback
+  // Provider unavailable (bad key, CORS, offline) — rule-engine fallback
   return [{ provider: "Offline", text: getOfflineRentRightResponse(userInput) }];
 }

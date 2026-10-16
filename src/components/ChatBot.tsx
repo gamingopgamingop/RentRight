@@ -3,7 +3,6 @@ import { X, Send, AlertCircle } from 'lucide-react';
 import { Button } from "@/components/ui/button";
 import ChatBotIcon from './ChatBotIcon';
 import { generateDualChatReplies, type ChatProvider } from '../utils/chatApi';
-import { testGeminiConnection } from '../utils/geminiApi';
 import { testNemotronConnection } from '../utils/nemotronApi';
 import type { ProviderTestResult } from '../utils/providerErrors';
 import type { ChatTurn } from '../utils/siteKnowledge';
@@ -30,16 +29,13 @@ const ChatBot: React.FC = () => {
   ]);
   const [inputValue, setInputValue] = useState('');
   const [isLoading, setIsLoading] = useState(false);
-  const [geminiResult, setGeminiResult] = useState<ProviderTestResult | null>(null);
   const [nemotronResult, setNemotronResult] = useState<ProviderTestResult | null>(null);
   const [checkingConn, setCheckingConn] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
-  // Banner only when BOTH configured providers are offline. A single down
-  // provider (e.g. Gemini quota) is shown per-chip but does NOT claim the
-  // whole assistant is offline, since the other can still answer.
-  const allProvidersDown =
-    geminiResult?.status === 'offline' && nemotronResult?.status === 'offline';
+  // TEMPORARY: Gemini disabled, Nemotron is the only configured provider — so
+  // the offline banner shows whenever Nemotron alone is down.
+  const allProvidersDown = nemotronResult?.status === 'offline';
 
   // Auto-scroll to the bottom when new messages arrive
   useEffect(() => {
@@ -48,19 +44,14 @@ const ChatBot: React.FC = () => {
     }
   }, [messages]);
   
-  // Probe both Gemini and Nemotron. Runs on mount and via the banner's Retry
-  // button (e.g. after a Gemini quota window resets) so the user is not stuck
-  // on offline answers until a full reload.
+  // Probe Nemotron (via the deployed proxy). Runs on mount and via the banner's
+  // Retry button so the user is not stuck on offline answers until a reload.
   const runConnectionChecks = async () => {
     setCheckingConn(true);
     try {
-      // Each probe returns a structured result and never throws (it catches
+      // The probe returns a structured result and never throws (it catches
       // transport/quota/auth internally).
-      const [gem, nem] = await Promise.all([
-        testGeminiConnection(),
-        testNemotronConnection(),
-      ]);
-      setGeminiResult(gem);
+      const nem = await testNemotronConnection();
       setNemotronResult(nem);
     } finally {
       setCheckingConn(false);
@@ -196,10 +187,9 @@ const ChatBot: React.FC = () => {
             <div className="leading-tight">
               <span className="font-bold text-sm block">RentRight Rental Assistant</span>
               <span className="text-[10px] text-violet-200">
-                Gemini + NVIDIA Nemotron · answers from RentRight site data
+                NVIDIA Nemotron · answers from RentRight site data
               </span>
               <div className="flex items-center gap-3 mt-1">
-                {renderStatusChip(geminiResult, 'Gemini')}
                 {renderStatusChip(nemotronResult, 'Nemotron')}
               </div>
             </div>
