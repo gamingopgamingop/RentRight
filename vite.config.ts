@@ -68,6 +68,15 @@ function nemotronDevServer(apiKey: string | undefined): Plugin {
           res.end(JSON.stringify({ error: { message: "Only POST is supported." } }));
           return;
         }
+        // Path allowlist (parity with the prod function): only chat/completions.
+        // Connect strips the mount prefix, so req.url is the remainder.
+        const rest = (req.url || "").split("?")[0].replace(/^\/+/, "");
+        if (rest !== "v1/chat/completions") {
+          res.statusCode = 404;
+          res.setHeader("Content-Type", "application/json");
+          res.end(JSON.stringify({ error: { message: "Unsupported endpoint." } }));
+          return;
+        }
         const chunks: Buffer[] = [];
         let size = 0;
         let tooLarge = false;
