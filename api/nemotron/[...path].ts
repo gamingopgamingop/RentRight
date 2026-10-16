@@ -1,19 +1,17 @@
 /**
- * Production server proxy for NVIDIA Nemotron: /api/nemotron/* ->
- * https://integrate.api.nvidia.com/*
+ * Production serverless proxy for NVIDIA Nemotron.
+ * Route: POST /api/nemotron/v1/chat/completions  (catch-all [...path])
  *
- * WHY: NVIDIA's endpoint sends no CORS headers, so the browser cannot call it
- * cross-origin in production. In dev the Vite proxy handles it; in prod this
- * same-origin function does. The browser talks to OUR origin (no CORS), and
- * this server forwards to NVIDIA (server-to-server has no CORS).
- *
- * Auth: prefers a server-side NVIDIA_API_KEY (set in Vercel env). If absent,
- * it passes through the Authorization header the client already sends, so it
- * keeps working with the existing VITE_NVIDIA_API_KEY setup.
+ * The browser calls this SAME-ORIGIN endpoint (no CORS), and this function
+ * forwards to NVIDIA with a server-side key. Guards:
+ *   - POST only (OPTIONS handled for completeness); other methods -> 405
+ *   - only the chat/completions path is served -> anything else 404
+ *   - cross-origin requests are rejected (prevents public API relay)
+ *   - request body size capped
+ *   - key read only from process.env.NVIDIA_API_KEY (never from the client)
+ * No wildcard CORS is emitted on purpose: the app is same-origin.
  */
-import { withCors, readJsonBody, sendUpstream } from "../_http";
-
-const NVIDIA_HOST = "https://integrate.api.nvidia.com";
+import { forwardNemotronChat, MAX_BODY_BYTES } from "../_nemotron";
 
 interface MinimalRequest {
   method?: string;
@@ -24,61 +22,65 @@ interface MinimalRequest {
 interface MinimalResponse {
   status(code: number): MinimalResponse;
   json(body: unknown): void;
-  send?(body: unknown): void;
   setHeader?(key: string, value: string): void;
+}
+
+function firstHeader(
+  headers: MinimalRequest["headers"],
+  key: string
+): string | undefined {
+  const v = headers?.[key];
+  return Array.isArray(v) ? v[0] : typeof v === "string" ? v : undefined;
 }
 
 export default async function handler(req: MinimalRequest, res: MinimalResponse) {
   try {
-    withCors(res);
     if (req.method === "OPTIONS") {
       res.status(204).json({});
       return;
     }
+    if (req.method !== "POST") {
+      res.status(405).json({ error: { message: "Only POST is supported." } });
+      return;
+    }
 
-    // Rebuild the target path from the catch-all segments (e.g. v1/chat/completions).
+    // Same-origin guard: if an Origin header is present it must match Host.
+    const origin = firstHeader(req.headers, "origin");
+    const host = firstHeader(req.headers, "host");
+    if (origin && host) {
+      try {
+        if (new URL(origin).host !== host) {
+          res.status(403).json({ error: { message: "Cross-origin requests are not allowed." } });
+          return;
+        }
+      } catch {
+        res.status(400).json({ error: { message: "Invalid Origin header." } });
+        return;
+      }
+    }
+
+    // Path allowlist: only v1/chat/completions is served by this relay.
     const seg = req.query?.path;
     const segments = Array.isArray(seg) ? seg : typeof seg === "string" ? [seg] : [];
-    const target = `${NVIDIA_HOST}/${segments.join("/")}`;
-
-    // Server-side key wins; otherwise pass through what the client sent.
-    const passthrough = req.headers?.authorization;
-    const authHeader =
-      process.env.NVIDIA_API_KEY != null && process.env.NVIDIA_API_KEY !== ""
-        ? `Bearer ${process.env.NVIDIA_API_KEY}`
-        : typeof passthrough === "string"
-        ? passthrough
-        : "";
-
-    if (!authHeader) {
-      res.status(401).json({ error: { message: "Missing NVIDIA API key (set NVIDIA_API_KEY on the server)." } });
+    if (segments.join("/") !== "v1/chat/completions") {
+      res.status(404).json({ error: { message: "Unsupported endpoint." } });
       return;
     }
 
-    if (typeof fetch !== "function") {
-      res.status(500).json({ error: { message: "Server runtime has no global fetch. Use Node 18+ (see vercel.json)." } });
+    // Body size cap (defence in depth; Vercel also caps overall payload).
+    const len = Number(firstHeader(req.headers, "content-length") || 0);
+    if (len > MAX_BODY_BYTES) {
+      res.status(413).json({ error: { message: "Request body too large." } });
       return;
     }
 
-    const isGet = req.method === "GET" || req.method === "HEAD";
-    const body = isGet ? undefined : JSON.stringify(readJsonBody(req.body));
-
-    const upstream = await fetch(target, {
-      method: req.method || "POST",
-      headers: {
-        Authorization: authHeader,
-        "Content-Type": "application/json",
-        Accept: "application/json",
-      },
-      body,
-    });
-
-    const text = await upstream.text();
-    sendUpstream(res, upstream.status, text, upstream.headers.get("content-type"));
+    const { status, json } = await forwardNemotronChat(req.body ?? {}, process.env.NVIDIA_API_KEY);
+    res.status(status).json(json);
   } catch (err: any) {
-    console.error("[nemotron-proxy] unhandled error:", err);
+    // Never log prompts/keys; a generic tag is enough for ops.
+    console.error("[nemotron-proxy] unhandled error:", err?.name || err?.message || "unknown");
     try {
-      res.status(502).json({ error: { message: `Nemotron proxy error: ${err?.message || "unknown"}` } });
+      res.status(500).json({ error: { message: "Internal proxy error." } });
     } catch {
       /* response already sent */
     }

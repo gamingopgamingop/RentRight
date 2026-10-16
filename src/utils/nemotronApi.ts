@@ -1,9 +1,21 @@
 import { buildRagPrompt, normalizeHistory, type ChatTurn } from "./siteKnowledge";
+import {
+  classifyError,
+  classifyHttp,
+  withBoundedRetry,
+  ProviderError,
+  type ProviderTestResult,
+} from "./providerErrors";
 
 /**
  * NVIDIA Nemotron chat client (OpenAI-compatible NIM Endpoint API).
- * Docs: https://docs.nvidia.com/nim/large-language-models/latest/index.html
- * Uses VITE_NVIDIA_API_KEY from .env and a configurable model id.
+ *
+ * The browser NEVER calls NVIDIA directly (it sends no CORS headers) and NEVER
+ * holds the API key. Every request goes to our same-origin server proxy at
+ * /api/nemotron/v1/chat/completions — a Vite dev middleware in development and
+ * a Vercel serverless function in production — which injects the server-side
+ * NVIDIA_API_KEY and forwards upstream. Only the (non-secret) model id is
+ * configurable from the client.
  */
 
 const NEMOTRON_MODEL =
@@ -11,54 +23,29 @@ const NEMOTRON_MODEL =
   "nvidia/nemotron-3-super-120b-a12b";
 const REQUEST_TIMEOUT_MS = 60_000;
 
-/**
- * NVIDIA sends no CORS headers, so browser calls must go through a proxy:
- * - dev: Vite dev-server proxy (/nemotron-api -> integrate.api.nvidia.com)
- * - prod: same-origin serverless proxy (/api/nemotron -> integrate.api.nvidia.com)
- * Using a same-origin path in prod means the browser never makes a cross-origin
- * request, so there is no CORS failure. Override with VITE_NEMOTRON_BASE_URL if
- * you host the proxy on a different domain.
- */
-const NVIDIA_BASE_URL = import.meta.env.DEV
-  ? "/nemotron-api/v1"
-  : ((import.meta.env.VITE_NEMOTRON_BASE_URL as string | undefined) ||
-      "/api/nemotron/v1");
+const NEMOTRON_BASE_URL =
+  (import.meta.env.VITE_NEMOTRON_BASE_URL as string | undefined) || "/api/nemotron/v1";
 
-function getNvidiaKey(): string | undefined {
-  return import.meta.env.VITE_NVIDIA_API_KEY as string | undefined;
-}
-
-export function isNemotronConfigured(): boolean {
-  return !!getNvidiaKey();
-}
-
-type NemotronRaw = {
+interface RawResult {
   ok: boolean;
   status: number;
   data: any;
   errorText: string;
-};
+}
 
-/** Low-level request so callers can decide what counts as success. */
+/** Low-level request so callers decide what counts as success. */
 async function requestNemotron(
   messages: { role: string; content: string }[],
   maxTokens = 1500
-): Promise<NemotronRaw> {
-  const key = getNvidiaKey();
-  if (!key) {
-    throw new Error("VITE_NVIDIA_API_KEY is not set");
-  }
-
+): Promise<RawResult> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
-
   try {
-    const res = await fetch(`${NVIDIA_BASE_URL}/chat/completions`, {
+    const res = await fetch(`${NEMOTRON_BASE_URL}/chat/completions`, {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${key}`,
         "Content-Type": "application/json",
-        Accept: "application/json"
+        Accept: "application/json",
       },
       body: JSON.stringify({
         model: NEMOTRON_MODEL,
@@ -68,9 +55,9 @@ async function requestNemotron(
         // Nemotron-3 is a reasoning model: hidden reasoning tokens are drawn
         // from this budget too, so it must be generous or content comes back empty.
         max_tokens: maxTokens,
-        stream: false
+        stream: false,
       }),
-      signal: controller.signal
+      signal: controller.signal,
     });
 
     const errorText = await res.text();
@@ -78,9 +65,12 @@ async function requestNemotron(
     try {
       data = errorText ? JSON.parse(errorText) : null;
     } catch {
-      /* non-JSON body; keep data null */
+      /* non-JSON body */
     }
     return { ok: res.ok, status: res.status, data, errorText };
+  } catch (err) {
+    // Transport-level failure (network / CORS / abort) — no HTTP status seen.
+    throw new ProviderError(classifyError(err, { provider: "Nemotron" }));
   } finally {
     clearTimeout(timer);
   }
@@ -89,20 +79,23 @@ async function requestNemotron(
 async function callNemotron(messages: { role: string; content: string }[]): Promise<string> {
   const r = await requestNemotron(messages, 1500);
   if (!r.ok) {
-    throw new Error(`Nemotron API error ${r.status}: ${r.errorText}`);
+    throw new ProviderError(classifyHttp(r.status, r.errorText, "Nemotron"));
   }
   const content = r.data?.choices?.[0]?.message?.content?.trim();
   if (!content) {
-    throw new Error(
-      "Nemotron returned no answer text (reasoning budget may be exhausted)"
-    );
+    throw new ProviderError({
+      kind: "server",
+      retryable: true,
+      message: "Nemotron returned no answer text (reasoning budget may be exhausted).",
+    });
   }
   return content;
 }
 
 /**
- * Generate a RentRight-grounded answer with Nemotron.
- * `history` (prior turns) is included so the model can handle follow-ups.
+ * Generate a RentRight-grounded answer with Nemotron via the server proxy.
+ * Transient failures (rate limit / 5xx / network / timeout) get bounded
+ * exponential backoff with jitter; quota/auth/invalid errors are not retried.
  */
 export async function generateNemotronResponse(
   userInput: string,
@@ -110,32 +103,63 @@ export async function generateNemotronResponse(
 ): Promise<string> {
   const messages = [
     { role: "system", content: buildRagPrompt(userInput) },
-    ...normalizeHistory(history), // alternate turns, newest window
-    { role: "user", content: userInput }
+    ...normalizeHistory(history),
+    { role: "user", content: userInput },
   ];
-  return callNemotron(messages);
+  return withBoundedRetry(() => callNemotron(messages), {
+    provider: "Nemotron",
+    maxAttempts: 3,
+  });
 }
 
 /**
- * Lightweight connectivity probe used on ChatBot mount.
- * Treats an HTTP 2xx as "connected" even if this tiny ping returns only
- * reasoning tokens with empty `content` — the reasoning model often does that
- * for trivial prompts, but the API is clearly reachable (real questions use a
- * larger token budget and do return content). This avoids a false "down" that
- * would wrongly trigger the offline banner.
+ * Connection probe — tests Nemotron THROUGH the deployed backend proxy (never
+ * directly from the browser). Distinguishes "proxy reachable" from "model
+ * answered", and surfaces a safe, secret-free diagnostic.
  */
-export async function testNemotronConnection(): Promise<boolean> {
+export async function testNemotronConnection(): Promise<ProviderTestResult> {
+  const base = { provider: "Nemotron" as const };
   try {
     const r = await requestNemotron(
       [
         { role: "system", content: "Reply with exactly: ok" },
-        { role: "user", content: "ping" }
+        { role: "user", content: "ping" },
       ],
       300
     );
-    return r.ok;
-  } catch (error) {
-    console.warn("Nemotron connection test failed:", error);
-    return false;
+    if (r.ok) {
+      const content = r.data?.choices?.[0]?.message?.content?.trim();
+      return {
+        ...base,
+        reachable: true,
+        modelResponded: !!content,
+        status: content ? "online" : "degraded",
+        kind: "ok",
+        message: content
+          ? "Proxy reachable; model responded."
+          : "Proxy reachable (reasoning model returned no short answer — normal for a tiny probe).",
+      };
+    }
+    const c = classifyHttp(r.status, r.errorText, "Nemotron");
+    return {
+      ...base,
+      reachable: true, // the proxy itself answered
+      modelResponded: false,
+      status: c.kind === "not_configured" || c.kind === "auth" ? "offline" : "degraded",
+      kind: c.kind,
+      message: c.message,
+      retryAfterMs: c.retryAfterMs,
+    };
+  } catch (err) {
+    const c = err instanceof ProviderError ? err.classification : classifyError(err, { provider: "Nemotron" });
+    return {
+      ...base,
+      reachable: c.kind !== "network",
+      modelResponded: false,
+      status: "offline",
+      kind: c.kind,
+      message: c.message,
+      retryAfterMs: c.retryAfterMs,
+    };
   }
 }
