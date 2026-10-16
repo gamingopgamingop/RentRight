@@ -15,7 +15,7 @@ import { forwardNemotronChat, MAX_BODY_BYTES } from "../_nemotron";
 
 interface MinimalRequest {
   method?: string;
-  body?: any;
+  body?: unknown;
   headers?: Record<string, string | string[] | undefined>;
   query?: Record<string, string | string[] | undefined>;
 }
@@ -76,9 +76,10 @@ export default async function handler(req: MinimalRequest, res: MinimalResponse)
 
     const { status, json } = await forwardNemotronChat(req.body ?? {}, process.env.NVIDIA_API_KEY);
     res.status(status).json(json);
-  } catch (err: any) {
+  } catch (err) {
+    const e = err as { name?: string; message?: string };
     // Never log prompts/keys; a generic tag is enough for ops.
-    console.error("[nemotron-proxy] unhandled error:", err?.name || err?.message || "unknown");
+    console.error("[nemotron-proxy] unhandled error:", e?.name || e?.message || "unknown");
     try {
       res.status(500).json({ error: { message: "Internal proxy error." } });
     } catch {

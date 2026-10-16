@@ -27,8 +27,8 @@ export interface ForwardResult {
 /** Strip anything key-like before surfacing an upstream error to the client. */
 function sanitize(text: string): string {
   return String(text || "")
-    .replace(/(nvapi-|AIza|sk-)[A-Za-z0-9_\-]+/g, "[redacted]")
-    .replace(/Bearer\s+[A-Za-z0-9._\-]+/gi, "Bearer [redacted]")
+    .replace(/(nvapi-|AIza|sk-)[A-Za-z0-9_-]+/g, "[redacted]")
+    .replace(/Bearer\s+[A-Za-z0-9._-]+/gi, "Bearer [redacted]")
     .replace(/\s+/g, " ")
     .trim()
     .slice(0, 300);
@@ -49,7 +49,14 @@ export function validateNemotronBody(body: unknown): Validation {
   if (!body || typeof body !== "object" || Array.isArray(body)) {
     return { ok: false, message: "Request body must be a JSON object." };
   }
-  const b = body as Record<string, any>;
+  const b = body as {
+    model?: unknown;
+    stream?: unknown;
+    messages?: unknown;
+    temperature?: unknown;
+    top_p?: unknown;
+    max_tokens?: unknown;
+  };
 
   if (typeof b.model !== "string" || !b.model.trim()) {
     return { ok: false, message: '"model" is required.' };
@@ -60,7 +67,8 @@ export function validateNemotronBody(body: unknown): Validation {
   if (!Array.isArray(b.messages) || b.messages.length === 0 || b.messages.length > MAX_MESSAGES) {
     return { ok: false, message: `"messages" must be a non-empty array (max ${MAX_MESSAGES}).` };
   }
-  for (const m of b.messages) {
+  const msgs = b.messages as { role?: unknown; content?: unknown }[];
+  for (const m of msgs) {
     if (!m || typeof m !== "object" || typeof m.role !== "string" || typeof m.content !== "string") {
       return { ok: false, message: 'Each message needs string "role" and "content".' };
     }
@@ -72,7 +80,7 @@ export function validateNemotronBody(body: unknown): Validation {
     ok: true,
     payload: {
       model: b.model.trim(),
-      messages: b.messages.map((m: any) => ({ role: m.role, content: m.content })),
+      messages: msgs.map((m) => ({ role: m.role as string, content: m.content as string })),
       temperature: typeof b.temperature === "number" ? Math.max(0, Math.min(2, b.temperature)) : 0.6,
       top_p: typeof b.top_p === "number" ? Math.max(0, Math.min(1, b.top_p)) : 0.95,
       max_tokens: clampInt(b.max_tokens, 1, 4000, 1500),
@@ -115,7 +123,7 @@ export async function forwardNemotronChat(
     });
 
     const text = await res.text();
-    let parsed: any = null;
+    let parsed: { error?: { message?: unknown }; detail?: unknown; message?: unknown } | null = null;
     try {
       parsed = text ? JSON.parse(text) : null;
     } catch {
@@ -138,15 +146,16 @@ export async function forwardNemotronChat(
       status: res.status,
       json: { error: { message: sanitize(upstreamMsg), status: res.status } },
     };
-  } catch (e: any) {
-    const aborted = e?.name === "AbortError";
+  } catch (e) {
+    const err = e as { name?: string; message?: string };
+    const aborted = err?.name === "AbortError";
     return {
       status: aborted ? 504 : 502,
       json: {
         error: {
           message: aborted
             ? "Upstream request to NVIDIA timed out."
-            : `Could not reach NVIDIA: ${sanitize(e?.message || "network error")}`,
+            : `Could not reach NVIDIA: ${sanitize(err?.message || "network error")}`,
         },
       },
     };

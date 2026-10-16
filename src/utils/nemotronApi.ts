@@ -26,10 +26,14 @@ const REQUEST_TIMEOUT_MS = 60_000;
 const NEMOTRON_BASE_URL =
   (import.meta.env.VITE_NEMOTRON_BASE_URL as string | undefined) || "/api/nemotron/v1";
 
+interface ChatCompletion {
+  choices?: { message?: { content?: string } }[];
+}
+
 interface RawResult {
   ok: boolean;
   status: number;
-  data: any;
+  data: ChatCompletion | null;
   errorText: string;
 }
 
@@ -61,7 +65,7 @@ async function requestNemotron(
     });
 
     const errorText = await res.text();
-    let data: any = null;
+    let data: ChatCompletion | null = null;
     try {
       data = errorText ? JSON.parse(errorText) : null;
     } catch {

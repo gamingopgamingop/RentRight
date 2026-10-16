@@ -69,7 +69,6 @@ const ChatBot: React.FC = () => {
 
   useEffect(() => {
     runConnectionChecks();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const toggleChat = () => {
