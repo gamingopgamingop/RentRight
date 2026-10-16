@@ -1,5 +1,5 @@
-import React, { useMemo, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import React, { useEffect, useMemo, useState } from "react";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import HeaderSection from "../components/HeaderSection";
 import FooterSection from "../components/FooterSection";
 import { Button } from "@/components/ui/button";
@@ -39,11 +39,23 @@ const TONE_LABEL: Record<Tone, string> = {
 
 export const AIRentNegotiatorPage: React.FC = () => {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const paramId = searchParams.get("property");
   const { properties } = useProperties();
-  const [selectedId, setSelectedId] = useState<string>(String(properties[0]?.id || ""));
+  const [selectedId, setSelectedId] = useState<string>(
+    paramId || String(properties[0]?.id || "")
+  );
   const [tone, setTone] = useState<Tone>("polite");
   const [yourName, setYourName] = useState("Rahul Verma");
   const [extraNote, setExtraNote] = useState("");
+
+  // Honor a deep link like /ai-negotiator?property=ID once listings are loaded,
+  // so "Negotiate" actions on the Properties page preselect that listing.
+  useEffect(() => {
+    if (paramId && properties.some((p) => String(p.id) === paramId)) {
+      setSelectedId(paramId);
+    }
+  }, [paramId, properties]);
 
   const property = properties.find((p) => String(p.id) === selectedId);
 

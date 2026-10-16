@@ -6,7 +6,7 @@ import PropertyCard from "../components/PropertyCard";
 import CompareFloatingBar from "../components/CompareFloatingBar";
 import { useProperties, FilterParams } from "../contexts/PropertiesContext";
 import { Button } from "@/components/ui/button";
-import { Loader2, Sparkles, Building2, ShieldCheck, Scale, Calculator } from "lucide-react";
+import { Loader2, Sparkles, Building2, ShieldCheck, Scale, Calculator, Bot } from "lucide-react";
 import { Link } from "react-router-dom";
 import VoiceSearchBar from "../components/VoiceSearchBar";
 import { parseVoiceQuery } from "../utils/voiceSearch";
@@ -82,6 +82,9 @@ export const PropertiesPage: React.FC = () => {
               </Link>
               <Link to="/compare" className="text-violet-700 hover:underline flex items-center gap-1 font-semibold">
                 <Scale className="w-3.5 h-3.5" /> Comparison Matrix
+              </Link>
+              <Link to="/ai-negotiator" className="text-fuchsia-700 hover:underline flex items-center gap-1 font-semibold">
+                <Bot className="w-3.5 h-3.5" /> AI Rent Negotiator
               </Link>
             </div>
           </div>

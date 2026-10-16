@@ -2,7 +2,7 @@ import React, { useState } from "react";
 import { Link } from "react-router-dom";
 import { Property, useProperties } from "../contexts/PropertiesContext";
 import { Badge } from "@/components/ui/badge";
-import { Star, ShieldCheck, Heart, Scale, MapPin, Calendar, Check, Zap, FileCheck, AlertOctagon } from "lucide-react";
+import { Star, ShieldCheck, Heart, Scale, MapPin, Calendar, Check, Zap, FileCheck, AlertOctagon, Bot } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 import {
@@ -231,6 +231,11 @@ export const PropertyCard: React.FC<PropertyCardProps> = ({ property, featured =
         <Link to={`/property/${property.id}`} className="w-full">
           <Button size="sm" variant="outline" className="w-full text-xs h-8 border-violet-200 text-violet-700 hover:bg-violet-50">
             View Details & Rules
+          </Button>
+        </Link>
+        <Link to={`/ai-negotiator?property=${property.id}`} className="w-full">
+          <Button size="sm" className="w-full text-xs h-8 gap-1 bg-fuchsia-600 hover:bg-fuchsia-700 text-white" onClick={(e) => e.stopPropagation()}>
+            <Bot className="w-3.5 h-3.5" /> Negotiate Rent
           </Button>
         </Link>
       </div>
