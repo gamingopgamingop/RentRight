@@ -240,7 +240,7 @@ def save_property(property_id: str, user=Depends(current_user), db=Depends(get_d
     prop = db.query(Record).filter(Record.id == property_id, Record.type == "property").first()
     if not prop:
         raise HTTPException(status_code=404, detail="Property not found.")
-    existing = db.query(Record).filter(Record.type == "saved", Record.owner_uid == user["uid"], Record.payload["propertyId"].as_string() == property_id).first()
+    existing = next((x for x in _records(db, "saved", user["uid"]) if x.payload.get("propertyId") == property_id), None)
     if existing:
         return _payload(existing)
     return _payload(_new(db, "saved", user["uid"], {"propertyId": property_id}))
