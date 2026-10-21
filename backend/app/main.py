@@ -15,7 +15,7 @@ load_dotenv()
 
 APP_NAME = "RentRight AI API"
 PROVIDER = os.getenv("LLM_PROVIDER", "nvidia").strip().lower()
-MODEL_NAME = os.getenv("LLM_MODEL", "nvidia/nemotron-3-nano-30b-a3b").strip()
+MODEL_NAME = os.getenv("LLM_MODEL", "nvidia/nemotron-3.5-lightning-30b-a3b").strip()
 API_BASE_URL = os.getenv("LLM_BASE_URL", "https://integrate.api.nvidia.com/v1").rstrip("/")
 API_KEY = os.getenv("NVIDIA_API_KEY", "").strip() if PROVIDER == "nvidia" else os.getenv("LLM_API_KEY", "").strip()
 ALLOWED_ORIGINS = [
