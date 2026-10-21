@@ -186,3 +186,47 @@ async def chat(payload: ChatRequest, request: Request) -> dict[str, object]:
         "model": data.get("model", payload.model or MODEL_NAME),
         "message": {"role": "assistant", "content": answer.strip()},
     }
+
+
+async def _generate_text(system_prompt: str, user_prompt: str) -> str:
+    """Call the configured OpenAI-compatible model for bounded feature drafts."""
+    if PROVIDER == "nvidia" and not API_KEY:
+        raise HTTPException(status_code=503, detail="Chat provider is not configured.")
+    if PROVIDER == "openai-compatible" and not API_KEY:
+        raise HTTPException(status_code=503, detail="Chat provider is not configured.")
+    headers = {"Content-Type": "application/json"}
+    if API_KEY:
+        headers["Authorization"] = f"Bearer {API_KEY}"
+    try:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(45.0, connect=8.0)) as client:
+            response = await client.post(
+                f"{API_BASE_URL}/chat/completions",
+                headers=headers,
+                json={
+                    "model": MODEL_NAME,
+                    "messages": [
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": user_prompt},
+                    ],
+                    "temperature": 0.4,
+                    "max_tokens": 700,
+                    "stream": False,
+                },
+            )
+    except httpx.TimeoutException:
+        raise HTTPException(status_code=504, detail="The AI provider timed out.")
+    except httpx.RequestError:
+        raise HTTPException(status_code=502, detail="Unable to connect to the AI provider.")
+    if response.status_code >= 400:
+        raise HTTPException(status_code=502, detail=f"AI provider returned HTTP {response.status_code}.")
+    try:
+        answer = response.json()["choices"][0]["message"]["content"]
+    except (ValueError, KeyError, IndexError, TypeError):
+        raise HTTPException(status_code=502, detail="The AI provider returned an unexpected response.")
+    if not isinstance(answer, str) or not answer.strip():
+        raise HTTPException(status_code=502, detail="The AI provider returned an empty response.")
+    return answer.strip()
+
+
+from .platform import router as platform_router
+app.include_router(platform_router)
