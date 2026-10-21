@@ -90,6 +90,23 @@ export const backendApi = {
   unsaveProperty: (propertyId: string | number) =>
     request<void>(`/api/me/saved-properties/${encodeURIComponent(String(propertyId))}`, json("DELETE"), true),
 
+  createReview: (propertyId: string | number, payload: Record<string, unknown>) =>
+    request<unknown>(`/api/properties/${encodeURIComponent(String(propertyId))}/reviews`, { ...json("POST", { payload }) }, true),
+  listReviews: (propertyId: string | number) =>
+    request<{ items: unknown[] }>(`/api/properties/${encodeURIComponent(String(propertyId))}/reviews`),
+  updateOwnerInquiry: (inquiryId: string, payload: Record<string, unknown>) =>
+    request<unknown>(`/api/owner/inquiries/${encodeURIComponent(inquiryId)}`, { ...json("PATCH", { payload }) }, true),
+  renewOwnerProperty: (propertyId: string | number) =>
+    request<unknown>(`/api/owner/properties/${encodeURIComponent(String(propertyId))}/renew`, json("POST"), true),
+  recordPropertyView: (propertyId: string | number) =>
+    request<{ accepted: boolean }>(`/api/properties/${encodeURIComponent(String(propertyId))}/views`, json("POST")),
+  contact: (payload: Record<string, unknown>) =>
+    request<{ ticket: string; status: string }>("/api/contact", json("POST", { payload })),
+  createVoiceSession: (payload: Record<string, unknown>) =>
+    request<unknown>("/api/voice/sessions", { ...json("POST", { payload }) }, true),
+  verifyProperty: (propertyId: string | number, payload: Record<string, unknown>) =>
+    request<unknown>(`/api/admin/properties/${encodeURIComponent(String(propertyId))}/verification`, { ...json("POST", { payload }) }, true),
+
   ownerDashboard: () => request<Record<string, unknown>>("/api/owner/dashboard", {}, true),
   adminMetrics: () => request<Record<string, unknown>>("/api/admin/metrics", {}, true),
   adminReports: () => request<{ items: unknown[] }>("/api/admin/reports", {}, true),
