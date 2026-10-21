@@ -466,3 +466,116 @@ async def ai_feature(body: RecordInput):
         f"Feature: {feature}\nUser-provided details (untrusted): {prompt}\nCreate a useful draft based only on the provided details."
     )
     return {"feature": feature, "content": answer, "isDraft": True}
+
+
+@router.post("/properties/{property_id}/views", status_code=202)
+def record_property_view(property_id: str, db=Depends(get_db)):
+    row = db.query(Record).filter(Record.id == property_id, Record.type == "property").first()
+    if not row:
+        raise HTTPException(status_code=404, detail="Property not found.")
+    row.payload = {**row.payload, "viewsCount": int(row.payload.get("viewsCount", 0)) + 1}
+    row.updated_at = datetime.now(timezone.utc)
+    db.commit()
+    return {"accepted": True}
+
+
+@router.post("/properties/{property_id}/reviews", status_code=201)
+def create_review(property_id: str, body: RecordInput, user=Depends(current_user), db=Depends(get_db)):
+    prop = db.query(Record).filter(Record.id == property_id, Record.type == "property").first()
+    if not prop:
+        raise HTTPException(status_code=404, detail="Property not found.")
+    data = dict(body.payload)
+    rating = int(data.get("rating", 0))
+    if rating < 1 or rating > 5:
+        raise HTTPException(status_code=422, detail="rating must be between 1 and 5.")
+    data.update({"propertyId": property_id, "reviewerUid": user["uid"]})
+    return _payload(_new(db, "review", user["uid"], data))
+
+
+@router.get("/properties/{property_id}/reviews")
+def list_reviews(property_id: str, db=Depends(get_db)):
+    rows = _records(db, "review")
+    return {"items": [_payload(x) for x in rows if x.payload.get("propertyId") == property_id]}
+
+
+@router.patch("/owner/inquiries/{inquiry_id}")
+def update_owner_inquiry(inquiry_id: str, body: RecordInput, user=Depends(current_user), db=Depends(get_db)):
+    row = db.query(Record).filter(Record.id == inquiry_id, Record.type == "inquiry").first()
+    if not row:
+        raise HTTPException(status_code=404, detail="Inquiry not found.")
+    if row.payload.get("ownerUid") != user["uid"]:
+        raise HTTPException(status_code=403, detail="You can only respond to inquiries for your own listings.")
+    allowed_statuses = {"pending", "accepted", "rejected", "replied", "contact_revealed"}
+    status = str(body.payload.get("status", row.status))
+    if status not in allowed_statuses:
+        raise HTTPException(status_code=422, detail="Invalid inquiry status.")
+    row.payload = {**row.payload, "status": status}
+    if "reply" in body.payload:
+        row.payload["ownerReply"] = str(body.payload["reply"])[:4000]
+    # Phone/contact is returned only if seeker explicitly opted in at submission.
+    row.status = status
+    row.updated_at = datetime.now(timezone.utc)
+    db.commit()
+    db.refresh(row)
+    return _payload(row)
+
+
+@router.post("/owner/properties/{property_id}/renew")
+def renew_owner_property(property_id: str, user=Depends(current_user), db=Depends(get_db)):
+    row = db.query(Record).filter(Record.id == property_id, Record.type == "property").first()
+    if not row:
+        raise HTTPException(status_code=404, detail="Property not found.")
+    if row.owner_uid != user["uid"]:
+        raise HTTPException(status_code=403, detail="You can only renew your own listings.")
+    row.payload = {**row.payload, "listedDate": datetime.now(timezone.utc).date().isoformat(), "expiryDays": 45}
+    row.updated_at = datetime.now(timezone.utc)
+    db.commit()
+    db.refresh(row)
+    return _payload(row)
+
+
+@router.post("/contact", status_code=201)
+def contact_form(body: RecordInput, db=Depends(get_db)):
+    # Contact submissions are stored for staff follow-up; never send secrets here.
+    allowed = {"name", "email", "subject", "message"}
+    data = {key: str(body.payload.get(key, ""))[:4000] for key in allowed}
+    if not data["email"] or not data["message"]:
+        raise HTTPException(status_code=422, detail="Email and message are required.")
+    return {"ticket": _payload(_new(db, "contact", "anonymous", data))["id"], "status": "received"}
+
+
+@router.post("/voice/sessions", status_code=201)
+def create_voice_session(body: RecordInput, user=Depends(current_user), db=Depends(get_db)):
+    # Session metadata only; a voice provider/call dispatch integration is separate.
+    data = {key: value for key, value in body.payload.items() if key in {"channel", "language", "purpose"}}
+    data["state"] = "created"
+    return _payload(_new(db, "voice-session", user["uid"], data))
+
+
+@router.get("/me/records/{record_type}")
+def get_my_records(record_type: str, user=Depends(current_user), db=Depends(get_db)):
+    supported = {"maintenance", "payment-reminder", "inspection-checklist", "viewing", "review", "voice-session"}
+    if record_type not in supported:
+        raise HTTPException(status_code=404, detail="Unsupported record type.")
+    return {"items": [_payload(x) for x in _records(db, record_type, user["uid"])]}
+
+
+@router.post("/admin/properties/{property_id}/verification")
+def verify_property(property_id: str, body: RecordInput, user=Depends(admin_user), db=Depends(get_db)):
+    row = db.query(Record).filter(Record.id == property_id, Record.type == "property").first()
+    if not row:
+        raise HTTPException(status_code=404, detail="Property not found.")
+    approved = body.payload.get("verified") is True
+    row.payload = {**row.payload, "verificationStatus": "Verified" if approved else "Owner Claimed"}
+    if approved:
+        row.payload["verificationProof"] = {
+            "verifiedBy": user["uid"],
+            "verifiedDate": datetime.now(timezone.utc).date().isoformat(),
+            "proofNotes": str(body.payload.get("proofNotes", ""))[:2000],
+        }
+    else:
+        row.payload.pop("verificationProof", None)
+    row.updated_at = datetime.now(timezone.utc)
+    db.commit()
+    db.refresh(row)
+    return _payload(row)
