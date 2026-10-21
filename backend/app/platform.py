@@ -579,3 +579,13 @@ def verify_property(property_id: str, body: RecordInput, user=Depends(admin_user
     db.commit()
     db.refresh(row)
     return _payload(row)
+
+
+@router.get("/owner/properties")
+def owner_properties(user=Depends(current_user), db=Depends(get_db)):
+    return {"items": [_payload(x) for x in _records(db, "property", user["uid"])]}
+
+
+@router.get("/admin/contacts")
+def admin_contacts(user=Depends(admin_user), db=Depends(get_db)):
+    return {"items": [_payload(x) for x in _records(db, "contact")[:500]]}
