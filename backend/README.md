@@ -76,3 +76,23 @@ Read `message.content` from the response. Set the backend URL in the frontend's 
 - Do not expose a private Ollama or vLLM port directly to the public internet. Put it behind a private network or authenticated gateway.
 - The API intentionally does not stream responses yet; streaming can be added when the frontend integration is known.
 - This is a starter service. Run dependency scanning, integration tests, and deployment checks before production use.
+
+## Platform API coverage
+
+The backend now includes endpoints for these frontend feature areas:
+
+- **Listings:** `GET/POST /api/properties`, `GET/PATCH/DELETE /api/properties/{id}`, search and filter query parameters.
+- **Seeker flows:** inquiries, viewing requests, listing reports, and saved properties.
+- **Owner portal:** owner inquiries and dashboard counts, with listing ownership enforced by Firebase UID.
+- **Admin:** metrics and report moderation, restricted to UIDs configured in `FIREBASE_ADMIN_UIDS`.
+- **Calculators/tools:** affordability, roommate matching, commute estimate, rent splitting, broker fee, moving cost, fake-listing risk checklist, deposit checklist, locality comparison data, heatmap data, inspection checklist, maintenance records, and payment reminders.
+- **AI features:** `POST /api/ai/features` for bounded drafts such as rental negotiation and comparison summaries; `POST /api/chat` for general conversation.
+- **Safety/agreement helpers:** safety guidance and a rent-agreement input checklist. These do not dispatch emergency help or produce a legally certified agreement.
+
+### Authentication and database setup
+
+Set `FIREBASE_PROJECT_ID` to the same Firebase project used by the web app. Configure application-default credentials/workload identity (recommended) or `GOOGLE_APPLICATION_CREDENTIALS` with a service-account file stored securely on the server. Add actual Firebase user UIDs to `FIREBASE_ADMIN_UIDS`; never trust a role value sent by the browser.
+
+Set `DATABASE_URL` to a managed PostgreSQL connection string in production. SQLite is for local development only and is not suitable for horizontally scaled serverless deployment. Apply database backups, migrations, request throttling at the edge/shared store, and monitoring before production use.
+
+These routes provide API foundations for the listed features; some UI pages still need to be wired to these endpoints, and locality/heatmap routes require a verified data source to provide real market data. Do not present placeholder/demo content as live or verified.
