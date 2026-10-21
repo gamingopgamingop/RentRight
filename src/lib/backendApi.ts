@@ -107,6 +107,8 @@ export const backendApi = {
   verifyProperty: (propertyId: string | number, payload: Record<string, unknown>) =>
     request<unknown>(`/api/admin/properties/${encodeURIComponent(String(propertyId))}/verification`, { ...json("POST", { payload }) }, true),
 
+  ownerProperties: () => request<{ items: unknown[] }>("/api/owner/properties", {}, true),
+  adminContacts: () => request<{ items: unknown[] }>("/api/admin/contacts", {}, true),
   ownerDashboard: () => request<Record<string, unknown>>("/api/owner/dashboard", {}, true),
   adminMetrics: () => request<Record<string, unknown>>("/api/admin/metrics", {}, true),
   adminReports: () => request<{ items: unknown[] }>("/api/admin/reports", {}, true),
